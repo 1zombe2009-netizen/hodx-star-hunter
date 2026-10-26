@@ -1,0 +1,339 @@
+
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>HODX | صياد النجوم</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#07101f;color:white;font-family:Arial,sans-serif;text-align:center;padding:12px}
+h1{color:#ffe45c;margin:8px}
+p{color:#cbdaf4}
+button{border:0;border-radius:12px;padding:12px 15px;margin:5px;font-size:15px;font-weight:bold;background:#ffe45c;color:#10182a;cursor:pointer}
+button:active{transform:scale(.97)}
+.blue{background:#38ceff}
+.dark{background:#263955;color:white}
+#stats{display:flex;flex-wrap:wrap;justify-content:center;gap:7px;margin:12px auto}
+.stat{background:#172842;padding:9px;border-radius:10px;font-size:14px}
+canvas{display:block;width:100%;max-width:650px;margin:auto;border:2px solid #38ceff;border-radius:14px;background:#102348;touch-action:manipulation}
+.panel{max-width:650px;margin:12px auto;padding:13px;background:#13243e;border:1px solid #284665;border-radius:15px}
+#shop{display:none}
+.item{display:inline-block;vertical-align:top;background:#203653;border-radius:12px;padding:10px;margin:5px;width:135px}
+.item strong{display:block;margin:8px}
+.small{font-size:12px;color:#bcd0ed}
+.hidden{display:none!important}
+#jump{font-size:19px;min-width:150px;background:#38ceff}
+</style>
+</head>
+<body>
+<h1>⭐ HODX ⭐</h1>
+<p>صيّاد النجوم — اجمع النجوم وافتح شخصيات جديدة!</p>
+
+<div id="stats">
+ <div class="stat">⭐ النقاط: <b id="score">0</b></div>
+ <div class="stat">❤️ الأرواح: <b id="lives">3</b></div>
+ <div class="stat">🌍 المرحلة: <b id="stage">1</b></div>
+ <div class="stat">🪙 العملات: <b id="coins">0</b></div>
+ <div class="stat">🏆 الرقم القياسي: <b id="best">0</b></div>
+</div>
+
+<canvas id="game" width="650" height="330"></canvas>
+
+<div class="panel" id="menu">
+ <h2 id="menuTitle">أهلًا بك في HODX!</h2>
+ <p id="menuText">اركض، اقفز، اجمع النجوم وتجنب الصخور.</p>
+ <button id="start">🚀 ابدأ اللعب</button>
+ <button id="shopButton" class="blue">🛒 متجر الشخصيات</button>
+ <button id="soundButton" class="dark">🔊 الصوت: تشغيل</button>
+ <p class="small">كل 10 نجوم تنتقل إلى مرحلة جديدة.</p>
+</div>
+
+<div class="panel" id="shop">
+ <h2>🛒 متجر الشخصيات</h2>
+ <p>اشتري الشخصيات باستخدام العملات 🪙</p>
+ <div id="items"></div>
+ <button id="back" class="dark">⬅️ رجوع</button>
+</div>
+
+<div>
+ <button id="jump">⬆️ اقفز</button>
+ <button id="pause" class="dark">⏸️ إيقاف</button>
+</div>
+
+<p class="small">HODX © Star Hunter</p>
+
+<script>
+const $=id=>document.getElementById(id);
+const canvas=$("game"),ctx=canvas.getContext("2d");
+
+const characters=[
+ {name:"البطل",cost:0,color:"#ffd64a",shirt:"#ffd64a"},
+ {name:"النينجا",cost:30,color:"#eeeeee",shirt:"#313849"},
+ {name:"البرق",cost:60,color:"#4eeaff",shirt:"#1585ff"},
+ {name:"النار",cost:100,color:"#ff9b4a",shirt:"#ef4242"},
+ {name:"الأسطورة",cost:160,color:"#e5a5ff",shirt:"#833bdb"}
+];
+
+let data={coins:0,best:0,owned:[0],selected:0,sound:true};
+try{
+ const saved=JSON.parse(localStorage.getItem("HODX_GAME_V2")||"null");
+ if(saved){
+  data.coins=Math.max(0,Number(saved.coins)||0);
+  data.best=Math.max(0,Number(saved.best)||0);
+  data.owned=Array.isArray(saved.owned)?saved.owned.filter(n=>Number.isInteger(n)&&n>=0&&n<characters.length):[0];
+  if(!data.owned.includes(0))data.owned.unshift(0);
+  data.selected=Number(saved.selected)||0;
+  if(!data.owned.includes(data.selected))data.selected=0;
+  data.sound=saved.sound!==false;
+ }
+}catch(e){}
+
+let running=false,paused=false,frame=0,score=0,lives=3,stage=1;
+let player,stars=[],rocks=[],lastTime=0,animation=null;
+let audio=null;
+
+function save(){
+ try{localStorage.setItem("HODX_GAME_V2",JSON.stringify(data))}catch(e){}
+ updateStats();
+}
+function updateStats(){
+ $("coins").textContent=data.coins;
+ $("best").textContent=data.best;
+ $("score").textContent=score;
+ $("lives").textContent=lives;
+ $("stage").textContent=stage;
+ $("soundButton").textContent=data.sound?"🔊 الصوت: تشغيل":"🔇 الصوت: إيقاف";
+}
+function beep(freq=600,duration=.08){
+ if(!data.sound)return;
+ try{
+  audio=audio||new(window.AudioContext||window.webkitAudioContext)();
+  if(audio.state==="suspended")audio.resume();
+  const osc=audio.createOscillator(),gain=audio.createGain();
+  osc.type="sine";osc.frequency.value=freq;
+  gain.gain.value=.045;
+  osc.connect(gain);gain.connect(audio.destination);
+  osc.start();gain.gain.exponentialRampToValueAtTime(.001,audio.currentTime+duration);
+  osc.stop(audio.currentTime+duration);
+ }catch(e){}
+}
+function init(){
+ player={x:75,y:240,w:30,h:43,vy:0,ground:true,invulnerable:0};
+ stars=[];rocks=[];score=0;lives=3;stage=1;frame=0;
+ lastTime=0;updateStats();
+}
+function background(){
+ const colors=[
+  ["#102348","#1b4770"],
+  ["#24194b","#624080"],
+  ["#092f38","#17665d"],
+  ["#38241c","#75442a"],
+  ["#101b39","#364f85"]
+ ];
+ const c=colors[(stage-1)%colors.length];
+ const g=ctx.createLinearGradient(0,0,0,330);
+ g.addColorStop(0,c[0]);g.addColorStop(1,c[1]);
+ ctx.fillStyle=g;ctx.fillRect(0,0,650,330);
+ ctx.fillStyle="#ffffff";
+ for(let i=0;i<32;i++){
+  let x=(i*103+18)%650,y=(i*47+11)%205;
+  ctx.globalAlpha=.35+(i%3)*.2;
+  ctx.fillRect(x,y,2,2);
+ }
+ ctx.globalAlpha=1;
+ ctx.fillStyle="#172d3d";ctx.fillRect(0,285,650,45);
+ ctx.fillStyle="#43d7ff";ctx.fillRect(0,285,650,4);
+ ctx.fillStyle="#ffffff";
+ ctx.font="bold 15px Arial";ctx.textAlign="left";
+ ctx.fillText("STAGE "+stage,15,25);
+}
+function drawPlayer(){
+ const ch=characters[data.selected]||characters[0];
+ const x=player.x,y=player.y;
+ ctx.save();
+ if(player.invulnerable>0&&Math.floor(frame/5)%2===0)ctx.globalAlpha=.45;
+ // legs
+ ctx.strokeStyle="#e7f2ff";ctx.lineWidth=5;
+ let leg=Math.sin(frame*.25)*5;
+ ctx.beginPath();
+ ctx.moveTo(x+10,y+36);ctx.lineTo(x+7+leg,y+44);
+ ctx.moveTo(x+21,y+36);ctx.lineTo(x+24-leg,y+44);
+ ctx.stroke();
+ // body
+ ctx.fillStyle=ch.shirt;ctx.fillRect(x+5,y+14,22,25);
+ // head
+ ctx.fillStyle="#ffd0a5";
+ ctx.beginPath();ctx.arc(x+16,y+8,10,0,Math.PI*2);ctx.fill();
+ // hair
+ ctx.fillStyle=ch.color;ctx.fillRect(x+6,y-2,21,6);
+ // eye
+ ctx.fillStyle="#111";ctx.fillRect(x+22,y+6,3,3);
+ // character accent
+ if(data.selected===1){
+  ctx.fillStyle="#252a39";ctx.fillRect(x+3,y+4,25,5);
+ }
+ if(data.selected===2){
+  ctx.strokeStyle="#4eeaff";ctx.lineWidth=2;
+  ctx.strokeRect(x+2,y+13,28,27);
+ }
+ if(data.selected===4){
+  ctx.fillStyle="#ffe45c";
+  ctx.beginPath();ctx.arc(x+16,y-5,4,0,Math.PI*2);ctx.fill();
+ }
+ ctx.restore();
+}
+function drawStar(s){
+ ctx.save();ctx.translate(s.x,s.y);ctx.rotate(frame*.025);
+ ctx.fillStyle="#ffe45c";ctx.shadowColor="#ffe45c";ctx.shadowBlur=9;
+ ctx.beginPath();
+ for(let i=0;i<10;i++){
+  let a=i*Math.PI/5-Math.PI/2,r=i%2===0?12:5;
+  ctx.lineTo(Math.cos(a)*r,Math.sin(a)*r);
+ }
+ ctx.closePath();ctx.fill();ctx.restore();
+}
+function drawRock(r){
+ ctx.fillStyle="#aab5c7";
+ ctx.beginPath();ctx.moveTo(r.x,285);
+ ctx.lineTo(r.x+7,263);ctx.lineTo(r.x+20,253);
+ ctx.lineTo(r.x+33,266);ctx.lineTo(r.x+38,285);
+ ctx.closePath();ctx.fill();
+}
+function hit(a,b){
+ return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;
+}
+function jump(){
+ if(running&&!paused&&player.ground){
+  player.vy=-12;player.ground=false;beep(440);
+ }
+}
+function startGame(){
+ if(animation)cancelAnimationFrame(animation);
+ init();running=true;paused=false;
+ $("menu").classList.add("hidden");
+ $("shop").style.display="none";
+ $("pause").textContent="⏸️ إيقاف";
+ animation=requestAnimationFrame(loop);
+}
+function gameOver(){
+ running=false;paused=false;
+ if(score>data.best)data.best=score;
+ save();beep(180,.2);
+ $("menuTitle").textContent="انتهت اللعبة! 🎮";
+ $("menuText").textContent="جمعت "+score+" نجمة. أفضل نتيجة: "+data.best;
+ $("start").textContent="🔄 العب من جديد";
+ $("menu").classList.remove("hidden");
+}
+function loop(timestamp){
+ if(!running||paused)return;
+ if(!lastTime)lastTime=timestamp;
+ let dt=Math.min((timestamp-lastTime)/16.67,2);
+ lastTime=timestamp;frame+=dt;
+ background();
+ const speed=Math.min(3+stage*.35,7);
+ player.vy+=.55*dt;player.y+=player.vy*dt;
+ if(player.y+player.h>=285){
+  player.y=285-player.h;player.vy=0;player.ground=true;
+ }
+ if(player.invulnerable>0)player.invulnerable-=dt;
+ if(frame%Math.max(35,66-stage*2)<dt){
+  stars.push({x:670,y:180+Math.random()*60,w:24,h:24});
+ }
+ if(frame%Math.max(40,96-stage*3)<dt){
+  rocks.push({x:670,y:253,w:38,h:32});
+ }
+ for(const s of stars){
+  s.x-=speed*dt;drawStar(s);
+  if(!s.got&&hit(player,s)){
+   s.got=true;score++;data.coins++;
+   const newStage=Math.floor(score/10)+1;
+   if(newStage>stage){stage=newStage;beep(850,.15)}
+   else beep(700,.06);
+   updateStats();save();
+  }
+ }
+ stars=stars.filter(s=>s.x>-30&&!s.got);
+ for(const r of rocks){
+  r.x-=speed*dt;drawRock(r);
+  if(!r.hit&&player.invulnerable<=0&&hit(player,r)){
+   r.hit=true;lives--;player.invulnerable=55;player.vy=-5;
+   updateStats();beep(200,.15);
+   if(lives<=0){drawPlayer();gameOver();return}
+  }
+ }
+ rocks=rocks.filter(r=>r.x>-50&&!r.hit);
+ drawPlayer();
+ updateStats();
+ animation=requestAnimationFrame(loop);
+}
+function renderStill(){
+ background();
+ if(!player)init();
+ drawPlayer();
+}
+function openShop(){
+ if(running){paused=true}
+ $("menu").classList.add("hidden");
+ $("shop").style.display="block";
+ renderShop();
+}
+function renderShop(){
+ const items=$("items");items.innerHTML="";
+ characters.forEach((ch,i)=>{
+  const owned=data.owned.includes(i);
+  const selected=data.selected===i;
+  const el=document.createElement("div");el.className="item";
+  const icon=document.createElement("div");
+  icon.textContent=["🦸","🥷","⚡","🔥","👑"][i];
+  icon.style.fontSize="36px";
+  const name=document.createElement("strong");name.textContent=ch.name;
+  const price=document.createElement("div");price.className="small";
+  price.textContent=i===0?"مجانية":"🪙 "+ch.cost;
+  const btn=document.createElement("button");
+  btn.style.fontSize="13px";
+  btn.textContent=selected?"✅ مختارة":owned?"اختيار": "شراء";
+  btn.disabled=selected;
+  btn.onclick=()=>{
+   if(owned){data.selected=i;beep();save();renderShop();return}
+   if(data.coins<ch.cost){alert("عملاتك غير كافية! اجمع المزيد من النجوم.");return}
+   data.coins-=ch.cost;data.owned.push(i);data.selected=i;
+   beep(850,.12);save();renderShop();
+  };
+  el.append(icon,name,price,btn);items.appendChild(el);
+ });
+}
+$("start").onclick=startGame;
+$("jump").onclick=jump;
+canvas.addEventListener("pointerdown",jump);
+$("shopButton").onclick=openShop;
+$("back").onclick=()=>{
+ $("shop").style.display="none";
+ if(running){paused=false;lastTime=0;animation=requestAnimationFrame(loop)}
+ else $("menu").classList.remove("hidden");
+};
+$("soundButton").onclick=()=>{data.sound=!data.sound;save();beep(500)};
+$("pause").onclick=()=>{
+ if(!running)return;
+ paused=!paused;
+ if(paused){
+  $("menuTitle").textContent="اللعبة متوقفة ⏸️";
+  $("menuText").textContent="اضغط متابعة لتكمل اللعب.";
+  $("start").textContent="▶️ متابعة";
+  $("start").onclick=()=>{
+   $("menu").classList.add("hidden");
+   running=true;paused=false;lastTime=0;
+   animation=requestAnimationFrame(loop);
+  };
+  $("menu").classList.remove("hidden");
+  $("pause").textContent="▶️ متابعة";
+ }else{
+  $("menu").classList.add("hidden");lastTime=0;
+  $("pause").textContent="⏸️ إيقاف";
+  animation=requestAnimationFrame(loop);
+ }
+};
+init();renderStill();save();
+</script>
+</body>
+</html>
